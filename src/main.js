@@ -6,6 +6,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { createRover } from './rover.js';
 
 // --- Renderer ---
 const canvas = document.getElementById('scene');
@@ -48,7 +49,9 @@ function heightAt(x, z) {
 }
 
 const CAM_X = 0;
-const CAM_Z = 34;
+const CAM_Z = 34; // centro de la distribución de rocas
+// El rover mira ~40° a la derecha del sol: luz lateral que lo modela, el sol en el borde del encuadre y las lunas al centro
+const ROVER_START = { x: 0, z: 20, heading: THREE.MathUtils.degToRad(168) };
 const TERRAIN_SIZE = 900;
 const TERRAIN_SEGS = 420;
 const terrainGeo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEGS, TERRAIN_SEGS);
@@ -58,6 +61,26 @@ for (let i = 0; i < pos.count; i++) {
   pos.setY(i, heightAt(pos.getX(i), pos.getZ(i)));
 }
 terrainGeo.computeVertexNormals();
+
+// Altura exacta de la malla visible (no de la función de ruido): interpola la misma
+// triangulación que PlaneGeometry, así el rover y las huellas pisan justo sobre la arena.
+const GRID_N = TERRAIN_SEGS + 1;
+const CELL = TERRAIN_SIZE / TERRAIN_SEGS;
+const gridH = new Float32Array(GRID_N * GRID_N);
+for (let i = 0; i < gridH.length; i++) gridH[i] = pos.getY(i);
+function groundAt(x, z) {
+  const gx = THREE.MathUtils.clamp((x + TERRAIN_SIZE / 2) / CELL, 0, TERRAIN_SEGS - 1e-4);
+  const gz = THREE.MathUtils.clamp((z + TERRAIN_SIZE / 2) / CELL, 0, TERRAIN_SEGS - 1e-4);
+  const ix = Math.floor(gx);
+  const iz = Math.floor(gz);
+  const fx = gx - ix;
+  const fz = gz - iz;
+  const a = gridH[ix + GRID_N * iz];
+  const b = gridH[ix + GRID_N * (iz + 1)];
+  const c = gridH[ix + 1 + GRID_N * (iz + 1)];
+  const d = gridH[ix + 1 + GRID_N * iz];
+  return fx + fz <= 1 ? a + fx * (d - a) + fz * (b - a) : c + (1 - fx) * (b - c) + (1 - fz) * (d - c);
+}
 
 // Color por altura y pendiente: óxido en valles, arena clara en crestas
 const colors = new Float32Array(pos.count * 3);
@@ -138,6 +161,7 @@ const rand = mulberry32(42);
 const dummy = new THREE.Object3D();
 const ROCK_TYPES = 5;
 const ROCKS_PER_TYPE = 260;
+const obstacles = []; // rocas grandes con las que el rover choca: { x, z, r }
 for (let t = 0; t < ROCK_TYPES; t++) {
   const rocks = new THREE.InstancedMesh(makeRockGeometry(t * 13.7), rockMat, ROCKS_PER_TYPE);
   rocks.castShadow = true;
@@ -149,10 +173,16 @@ for (let t = 0; t < ROCK_TYPES; t++) {
     const x = CAM_X + Math.cos(a) * r;
     const z = CAM_Z + Math.sin(a) * r;
     const big = Math.pow(rand(), 4) * THREE.MathUtils.smoothstep(r, 14, 50);
-    const s = 0.12 + rand() * 0.35 + big * 3.2;
-    dummy.position.set(x, heightAt(x, z) - s * 0.15, z); // semienterradas
+    let s = 0.12 + rand() * 0.35 + big * 3.2;
+    // Zona despejada alrededor del punto de partida del rover
+    if (Math.hypot(x - ROVER_START.x, z - ROVER_START.z) < 9) s = Math.min(s, 0.3);
+    const sx = s * (0.8 + rand() * 0.7);
+    const sy = s * (0.7 + rand() * 0.5);
+    const sz = s * (0.8 + rand() * 0.7);
+    dummy.position.set(x, groundAt(x, z) - s * 0.15, z); // semienterradas
     dummy.rotation.set(rand() * 0.5, rand() * Math.PI * 2, rand() * 0.5);
-    dummy.scale.set(s * (0.8 + rand() * 0.7), s * (0.7 + rand() * 0.5), s * (0.8 + rand() * 0.7));
+    dummy.scale.set(sx, sy, sz);
+    if (s > 0.8) obstacles.push({ x, z, r: ((sx + sz) / 2) * 0.95 });
     dummy.updateMatrix();
     rocks.setMatrixAt(i, dummy.matrix);
   }
@@ -251,7 +281,7 @@ sun.shadow.blurSamples = 16;
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.05;
 const sc = sun.shadow.camera;
-sc.left = -70; sc.right = 70; sc.top = 70; sc.bottom = -70;
+sc.left = -45; sc.right = 45; sc.top = 45; sc.bottom = -45;
 sc.near = 1; sc.far = 600;
 scene.add(sun, sun.target);
 
@@ -343,23 +373,41 @@ phobos.rotation.set(0.3, 1.2, 0.2);
 
 // --- Cámara ---
 const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 4000);
-camera.position.set(CAM_X, heightAt(CAM_X, CAM_Z) + 3, CAM_Z);
 const controls = new OrbitControls(camera, canvas);
-controls.target.set(CAM_X, camera.position.y + 1.5, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.maxPolarAngle = Math.PI * 0.53; // permite mirar un poco hacia el cielo
-controls.minDistance = 5;
-controls.maxDistance = 120;
-controls.update();
+controls.minDistance = 4;
+controls.maxDistance = 45;
 
-// Cielo y lunas siguen a la cámara: se comportan como si estuvieran en el infinito
+// --- Rover Perseverance ---
+// Reflejos: el cielo caramelo y el suelo óxido se convierten en un mapa de entorno
+// que solo usan los materiales del rover (metales, vidrio, pintura blanca).
+const envScene = new THREE.Scene();
+envScene.add(new THREE.Mesh(sky.geometry, sky.material));
+envScene.add(
+  new THREE.Mesh(
+    new THREE.SphereGeometry(1400, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x8a4a2a, side: THREE.BackSide }),
+  ),
+);
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envMap = pmrem.fromScene(envScene, 0.02).texture;
+pmrem.dispose();
+
+const rover = createRover({ scene, camera, controls, groundAt, obstacles, start: ROVER_START, envMap });
+rover.placeCameraBehind();
+window.__rover = rover; // depuración y para el script `npm run check`
+
+// Cielo y lunas siguen al rover: se comportan como si estuvieran en el infinito
 const PHOBOS_OFFSET = skyOffset(17, -15, 900);
 const DEIMOS_OFFSET = skyOffset(13, -30, 900);
 scene.add(phobos, deimos);
 
 function updateSky() {
-  sun.target.position.set(camera.position.x, 0, camera.position.z - 25);
+  // El mapa de sombras (±45 m) se mantiene centrado en el rover
+  const f = rover.position;
+  sun.target.position.set(f.x, f.y, f.z);
   sun.position.copy(sun.target.position).addScaledVector(sunDir, 300);
   sky.position.copy(camera.position);
   phobos.position.copy(camera.position).add(PHOBOS_OFFSET);
@@ -417,9 +465,12 @@ const timer = new THREE.Timer();
 let ready = false;
 renderer.setAnimationLoop((time) => {
   timer.update(time);
+  // El primer delta puede salir negativo (el timestamp de rAF es anterior al Timer)
+  const dt = THREE.MathUtils.clamp(timer.getDelta(), 0, 0.1);
+  rover.update(dt);
   controls.update();
   updateSky();
-  updateDust(Math.min(timer.getDelta(), 0.1), timer.getElapsed());
+  updateDust(dt, timer.getElapsed());
   filmPass.uniforms.time.value = timer.getElapsed();
   composer.render();
   if (!ready) {
