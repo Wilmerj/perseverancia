@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { createRover } from './rover.js';
+import { startMission } from './mission/index.js';
 
 // --- Renderer ---
 const canvas = document.getElementById('scene');
@@ -398,6 +399,7 @@ pmrem.dispose();
 const rover = createRover({ scene, camera, controls, groundAt, obstacles, start: ROVER_START, envMap });
 rover.placeCameraBehind();
 window.__rover = rover; // depuración y para el script `npm run check`
+startMission(); // control de misión: 4 datos reales de Percy (tecla T para ocultar)
 
 // Cielo y lunas siguen al rover: se comportan como si estuvieran en el infinito
 const PHOBOS_OFFSET = skyOffset(17, -15, 900);
