@@ -8,6 +8,7 @@ import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { createRover } from './rover.js';
 import { startMission } from './mission/index.js';
+import { startPhotos } from './photos/index.js';
 
 // --- Renderer ---
 const canvas = document.getElementById('scene');
@@ -401,6 +402,10 @@ rover.placeCameraBehind();
 window.__rover = rover; // depuración y para el script `npm run check`
 startMission(); // control de misión: 4 datos reales de Percy (tecla T para ocultar)
 
+// Cámaras de Percy: puntos que brillan sobre el modelo; un clic abre una foto real de esa cámara
+let photos = null;
+startPhotos({ camera, canvas, rover }).then((p) => (photos = p));
+
 // Cielo y lunas siguen al rover: se comportan como si estuvieran en el infinito
 const PHOBOS_OFFSET = skyOffset(17, -15, 900);
 const DEIMOS_OFFSET = skyOffset(13, -30, 900);
@@ -474,6 +479,7 @@ renderer.setAnimationLoop((time) => {
   updateSky();
   updateDust(dt, timer.getElapsed());
   filmPass.uniforms.time.value = timer.getElapsed();
+  photos?.update(timer.getElapsed());
   composer.render();
   if (!ready) {
     ready = true;

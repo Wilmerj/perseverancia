@@ -47,6 +47,7 @@ export function createRover({ scene, camera, controls, groundAt, obstacles, star
   // Valores por defecto hasta medir el modelo.
   let wheels = defaultWheels();
   const cameras = {};
+  const cameraAnchors = {}; // centro de cada pieza-cámara en el marco del rover (para los puntos de las fotos)
   let resolveLoaded;
   const loaded = new Promise((resolve) => (resolveLoaded = resolve));
 
@@ -60,7 +61,9 @@ export function createRover({ scene, camera, controls, groundAt, obstacles, star
   window.addEventListener('keydown', onKey(true));
   window.addEventListener('keyup', onKey(false));
   window.addEventListener('blur', () => keys.clear());
-  const pressed = (...codes) => codes.some((c) => keys.has(c));
+  // Mientras se ve una foto las teclas (flechas, Esc) son de la foto y no del manejo
+  let inputEnabled = true;
+  const pressed = (...codes) => inputEnabled && codes.some((c) => keys.has(c));
 
   // ---------- Carga del modelo ----------
   const draco = new DRACOLoader().setDecoderPath('/draco/');
@@ -123,6 +126,7 @@ export function createRover({ scene, camera, controls, groundAt, obstacles, star
       }
     });
     group.add(model);
+    group.updateMatrixWorld(true);
 
     // Piezas que son cámaras
     const found = [];
@@ -130,6 +134,9 @@ export function createRover({ scene, camera, controls, groundAt, obstacles, star
       if (o.name && CAMERA_NAME.test(o.name) && !NOT_A_CAMERA.test(o.name)) {
         cameras[o.name] = o;
         found.push(o);
+        const box = new THREE.Box3().setFromObject(o);
+        const center = box.isEmpty() ? o.getWorldPosition(new THREE.Vector3()) : box.getCenter(new THREE.Vector3());
+        cameraAnchors[o.name] = group.worldToLocal(center);
       }
     });
     console.log(
@@ -368,6 +375,11 @@ export function createRover({ scene, camera, controls, groundAt, obstacles, star
   const api = {
     group,
     cameras,
+    cameraAnchors,
+    setInputEnabled(enabled) {
+      inputEnabled = enabled;
+      keys.clear(); // al cerrar un visor no deben quedar flechas «pulsadas»
+    },
     loaded,
     update,
     placeCameraBehind,
